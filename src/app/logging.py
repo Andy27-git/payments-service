@@ -8,8 +8,12 @@ import sys
 from collections.abc import Iterator
 from typing import Any
 
+# default={} безопасен: значение никогда не мутируется на месте, log_context
+# всегда кладёт через _context.set(...) новый словарь, а не правит текущий
 _context: contextvars.ContextVar[dict[str, Any]] = contextvars.ContextVar("log_context", default={})
 
+# поля "пустой" LogRecord — чтобы в JSON-вывод попадали только кастомные extra-поля
+# (payment_id, retry_count и т.п.), а не служебные атрибуты самого LogRecord
 _RESERVED_RECORD_KEYS = set(logging.LogRecord("", 0, "", 0, "", None, None).__dict__) | {"message"}
 
 

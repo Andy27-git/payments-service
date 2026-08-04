@@ -8,6 +8,8 @@ from app.config import get_settings
 
 @lru_cache
 def get_engine() -> AsyncEngine:
+    # engine создаётся лениво (не при импорте модуля), чтобы тесты могли подменить
+    # FastAPI-зависимость get_session, ни разу не обратившись к настоящему DATABASE_URL
     return create_async_engine(get_settings().database_url, pool_pre_ping=True)
 
 

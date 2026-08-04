@@ -23,6 +23,8 @@ class PaymentAccepted(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
+    # validation_alias подставляет значение из атрибута ORM-модели (Payment.id),
+    # но сериализуется наружу под именем поля — payment_id
     payment_id: uuid.UUID = Field(validation_alias="id")
     status: PaymentStatus
     created_at: datetime
@@ -37,6 +39,7 @@ class PaymentDetail(BaseModel):
     amount: Decimal
     currency: Currency
     description: str
+    # ORM-атрибут называется metadata_ (см. models/payment.py); наружу отдаём metadata
     metadata: dict[str, Any] | None = Field(default=None, validation_alias="metadata_")
     status: PaymentStatus
     idempotency_key: str

@@ -15,6 +15,8 @@ from app.db.base import Base
 class Outbox(Base):
     __tablename__ = "outbox"
     __table_args__ = (
+        # partial index только по неопубликованным строкам — иначе relay-запрос
+        # со временем начнёт сканировать всю (растущую) таблицу outbox
         Index(
             "ix_outbox_unpublished_created_at",
             "created_at",

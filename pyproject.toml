@@ -25,6 +25,8 @@ dev = [
 ]
 
 [tool.uv]
+# это приложение, а не библиотека: не нужен build-backend/установка пакета,
+# код запускается из src/ напрямую (uvicorn --app-dir, sys.path в alembic/env.py)
 package = false
 
 [tool.pytest.ini_options]

@@ -33,6 +33,8 @@ class Payment(Base):
     amount: Mapped[Decimal] = mapped_column(Numeric(18, 2), nullable=False)
     currency: Mapped[str] = mapped_column(String(3), nullable=False)
     description: Mapped[str] = mapped_column(String(512), nullable=False)
+    # атрибут metadata_, а не metadata: имя "metadata" зарезервировано DeclarativeBase,
+    # колонка в БД при этом называется "metadata"
     metadata_: Mapped[dict[str, Any] | None] = mapped_column(
         "metadata", JSON().with_variant(JSONB, "postgresql"), nullable=True
     )

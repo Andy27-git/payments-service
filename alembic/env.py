@@ -9,6 +9,8 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 
 from alembic import context
 
+# проект — приложение (tool.uv package = false), а не установленный пакет,
+# поэтому src/ нужно добавить в sys.path вручную
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from app.config import get_settings  # noqa: E402
