@@ -8,9 +8,11 @@ import sys
 from collections.abc import Iterator
 from typing import Any
 
-# default={} безопасен: значение никогда не мутируется на месте, log_context
-# всегда кладёт через _context.set(...) новый словарь, а не правит текущий
-_context: contextvars.ContextVar[dict[str, Any]] = contextvars.ContextVar("log_context", default={})
+# default=None (а не {}) — ruff B039 запрещает мутируемые дефолты ContextVar;
+# отсутствие контекста всегда трактуем как пустой словарь через `or {}` ниже
+_context: contextvars.ContextVar[dict[str, Any] | None] = contextvars.ContextVar(
+    "log_context", default=None
+)
 
 # поля "пустой" LogRecord — чтобы в JSON-вывод попадали только кастомные extra-поля
 # (payment_id, retry_count и т.п.), а не служебные атрибуты самого LogRecord
@@ -19,7 +21,7 @@ _RESERVED_RECORD_KEYS = set(logging.LogRecord("", 0, "", 0, "", None, None).__di
 
 class _ContextFilter(logging.Filter):
     def filter(self, record: logging.LogRecord) -> bool:
-        for key, value in _context.get().items():
+        for key, value in (_context.get() or {}).items():
             setattr(record, key, value)
         return True
 
@@ -53,7 +55,7 @@ def setup_logging(level: str = "INFO") -> None:
 @contextlib.contextmanager
 def log_context(**fields: Any) -> Iterator[None]:
     """Добавляет поля (например payment_id, retry_count) во все логи внутри блока."""
-    token = _context.set({**_context.get(), **fields})
+    token = _context.set({**(_context.get() or {}), **fields})
     try:
         yield
     finally:

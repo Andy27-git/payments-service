@@ -40,3 +40,7 @@ testpaths = ["tests"]
 line-length = 100
 target-version = "py312"
 src = ["src"]
+
+[tool.ruff.lint]
+# B008: Depends(...) в дефолтах аргументов — идиоматичный паттерн FastAPI, не баг
+ignore = ["B008"]
