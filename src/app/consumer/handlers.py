@@ -36,16 +36,16 @@ class WebhookDeliveryError(Exception):
 
 @broker.subscriber(new_queue, channel=Channel(prefetch_count=PREFETCH_COUNT))
 async def handle_payment_new(body: dict[str, Any], message: RabbitMessage) -> None:
-    payment_id = uuid.UUID(body["payment_id"])
     attempt = int(message.headers.get(RETRY_COUNT_HEADER, 0))
 
     try:
+        payment_id = uuid.UUID(body["payment_id"])
         await _process(payment_id)
     except Exception:
-        # любая техническая ошибка (БД недоступна, вебхук вернул 5xx/таймаут) уходит по
-        # единому retry-пути; исходное сообщение при этом всё равно ack'аем ниже —
-        # повтор организуем сами через отдельные очереди, а не через nack брокера
-        logger.exception("payment %s: processing failed on attempt %s", payment_id, attempt)
+        # любая техническая ошибка (БД недоступна, вебхук вернул 5xx/таймаут, неразбираемый
+        # payload) уходит по единому retry-пути; исходное сообщение при этом всё равно
+        # ack'аем ниже — повтор организуем сами через отдельные очереди, а не через nack брокера
+        logger.exception("payment payload %s: processing failed on attempt %s", body, attempt)
         await _schedule_retry(body, attempt)
 
 

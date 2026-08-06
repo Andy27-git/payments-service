@@ -33,6 +33,10 @@ async def create_payment(session: AsyncSession, idempotency_key: str, data: Paym
         request_hash=request_hash,
     )
     repo.add(payment)
+    # payment.id генерируется client-side default'ом (uuid.uuid4) только во время flush,
+    # а не в момент конструирования объекта — без явного flush здесь payload содержал бы
+    # строку "None" вместо реального id
+    await session.flush()
     # outbox-запись пишется в той же транзакции, что и сам платёж (outbox pattern):
     # либо оба insert'а закоммитятся вместе, либо ни один — событие никогда не потеряется
     # и никогда не появится для несуществующего платежа
