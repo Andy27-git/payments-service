@@ -1,0 +1,74 @@
+x-app: &app
+  build: .
+  env_file: .env
+  restart: on-failure
+  depends_on:
+    postgres:
+      condition: service_healthy
+    rabbitmq:
+      condition: service_healthy
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: payments
+      POSTGRES_PASSWORD: payments
+      POSTGRES_DB: payments
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U payments -d payments"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  rabbitmq:
+    image: rabbitmq:3-management-alpine
+    environment:
+      RABBITMQ_DEFAULT_USER: guest
+      RABBITMQ_DEFAULT_PASS: guest
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    healthcheck:
+      # именно check_port_connectivity, а не -q ping: ping подтверждает только то, что
+      # Erlang-нода отвечает, и может успеть отработать раньше, чем поднимется сам
+      # AMQP-листенер на 5672 — тогда consumer стартует по "healthy" и тут же ловит
+      # ECONNREFUSED
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "check_port_connectivity"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  api:
+    <<: *app
+    ports:
+      - "8000:8000"
+    command: sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000"
+    healthcheck:
+      # без curl/wget в slim-образе: используем то, что уже есть в рантайме
+      test:
+        - CMD
+        - python
+        - -c
+        - import urllib.request as u; u.urlopen("http://localhost:8000/health", timeout=3)
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  consumer:
+    <<: *app
+    command: python -m app.consumer.app
+    depends_on:
+      # миграции гоняет только api (см. Dockerfile/CMD выше); пока таблицы не
+      # созданы, outbox-relay в consumer'е упадёт на первом же поллинге —
+      # поэтому consumer стартует не раньше, чем api пройдёт свой healthcheck
+      api:
+        condition: service_healthy
+
+volumes:
+  # именованные, а не анонимные: у анонимных volume'ов для rabbitmq в этом окружении
+  # наблюдались проблемы с правами на /var/lib/rabbitmq/.erlang.cookie при пересоздании
+  # контейнера
+  postgres_data:
+  rabbitmq_data:
