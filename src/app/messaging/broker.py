@@ -39,6 +39,10 @@ retry_queues = [
 
 dlq_queue = RabbitQueue("payments.new.dlq", durable=True, routing_key=DLQ_ROUTING_KEY)
 
+# имена retry-очередей по индексу = номеру попытки (0 → 2s, 1 → 4s, 2 → 8s);
+# consumer публикует в них напрямую через default exchange по имени очереди
+RETRY_QUEUE_NAMES = tuple(q.name for q in retry_queues)
+
 
 async def declare_topology() -> None:
     """Идемпотентно объявляет всю топологию (exchange'и, очереди, биндинги) в RabbitMQ.
