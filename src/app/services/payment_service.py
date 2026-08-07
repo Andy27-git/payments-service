@@ -33,16 +33,18 @@ async def create_payment(session: AsyncSession, idempotency_key: str, data: Paym
         request_hash=request_hash,
     )
     repo.add(payment)
-    # payment.id генерируется client-side default'ом (uuid.uuid4) только во время flush,
-    # а не в момент конструирования объекта — без явного flush здесь payload содержал бы
-    # строку "None" вместо реального id
-    await session.flush()
-    # outbox-запись пишется в той же транзакции, что и сам платёж (outbox pattern):
-    # либо оба insert'а закоммитятся вместе, либо ни один — событие никогда не потеряется
-    # и никогда не появится для несуществующего платежа
-    session.add(Outbox(event_type="payment.created", payload={"payment_id": str(payment.id)}))
 
     try:
+        # payment.id генерируется client-side default'ом (uuid.uuid4) только во время
+        # flush, а не в момент конструирования объекта — без явного flush здесь payload
+        # содержал бы строку "None" вместо реального id. Конфликт по уникальному индексу
+        # idempotency_key тоже может всплыть уже на этом flush, а не только на commit —
+        # поэтому flush внутри того же try, что и commit
+        await session.flush()
+        # outbox-запись пишется в той же транзакции, что и сам платёж (outbox pattern):
+        # либо оба insert'а закоммитятся вместе, либо ни один — событие никогда не потеряется
+        # и никогда не появится для несуществующего платежа
+        session.add(Outbox(event_type="payment.created", payload={"payment_id": str(payment.id)}))
         await session.commit()
     except IntegrityError:
         # уникальный индекс на idempotency_key сработал — значит запрос с этим ключом уже был

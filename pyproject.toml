@@ -31,10 +31,16 @@ package = false
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+# src/ не устанавливается как пакет (tool.uv package = false) — добавляем в sys.path так же,
+# как это делает uvicorn --app-dir в рантайме и alembic/env.py для миграций
+pythonpath = ["src"]
 markers = [
     "pg: тесты, требующие реальный Postgres через testcontainers (нужен Docker)",
 ]
 testpaths = ["tests"]
+# pg-тесты запускаются только явным `pytest -m pg`, а не при обычном прогоне —
+# без этого testcontainers пытался бы поднять Postgres в любом окружении с Docker
+addopts = "-m 'not pg'"
 
 [tool.ruff]
 line-length = 100
