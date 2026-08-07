@@ -65,14 +65,27 @@ async def test_create_payment_missing_idempotency_key_returns_422(client):
     assert response.status_code == 422
 
 
-async def test_create_payment_missing_api_key_returns_422(client):
-    # X-API-Key объявлен как Header(...) без дефолта — отсутствие заголовка ловит
-    # валидация параметров FastAPI до вызова dependency, поэтому это 422, а не 401
+async def test_create_payment_missing_api_key_returns_401(client):
+    # X-API-Key объявлен как Header(None) — отсутствие заголовка это ошибка
+    # аутентификации (401), а не валидации запроса (422)
     response = await client.post(
         "/api/v1/payments", json=VALID_BODY, headers={"Idempotency-Key": "k-4"}
     )
 
-    assert response.status_code == 422
+    assert response.status_code == 401
+
+
+async def test_create_payment_non_ascii_api_key_returns_401(client):
+    # httpx.Headers сам кодирует str-заголовки как ascii и упал бы ещё до отправки
+    # запроса; передаём заголовок как bytes — так же, как он приходит по проводу
+    # (ASGI decodes header values as latin-1), чтобы воспроизвести реальный кейс
+    response = await client.post(
+        "/api/v1/payments",
+        json=VALID_BODY,
+        headers={"X-API-Key": "пароль".encode(), "Idempotency-Key": b"k-4b"},
+    )
+
+    assert response.status_code == 401
 
 
 async def test_create_payment_wrong_api_key_returns_401(client):
