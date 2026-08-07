@@ -1,5 +1,7 @@
 # Payments Service
 
+Репозиторий: https://github.com/Andy27-git/payments-service
+
 Асинхронный сервис процессинга платежей: принимает запрос на оплату, публикует
 событие в RabbitMQ через outbox pattern, обрабатывает его consumer'ом (эмуляция
 платёжного шлюза) и уведомляет клиента через webhook — с повторными попытками
@@ -13,7 +15,7 @@ Alembic · Docker / docker-compose
 ## Запуск
 
 ```bash
-git clone <repo-url> && cd payments-service
+git clone https://github.com/Andy27-git/payments-service.git && cd payments-service
 cp .env.example .env
 docker compose up --build
 ```
