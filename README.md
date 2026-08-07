@@ -67,6 +67,26 @@ curl http://localhost:8000/api/v1/payments/<payment_id> -H "X-API-Key: change-me
 Возвращает полную информацию о платеже, включая `status`, `webhook_attempts`,
 `webhook_delivered_at`, `processed_at`. Неизвестный `payment_id` → `404`.
 
+Через несколько секунд после создания (эмуляция шлюза занимает 2-5с) `status`
+меняется на `succeeded` или `failed`, `processed_at` заполняется, а если
+`webhook_url` был рабочим — заполняется и `webhook_delivered_at`:
+
+```json
+{
+  "payment_id": "...", "amount": "10.00", "currency": "RUB",
+  "description": "тестовый платёж", "metadata": {"order_id": "42"},
+  "status": "succeeded", "idempotency_key": "order-42",
+  "webhook_url": "https://webhook.site/<your-id>",
+  "webhook_delivered_at": "2026-...", "webhook_attempts": 1,
+  "created_at": "2026-...", "processed_at": "2026-..."
+}
+```
+
+На `webhook_url` при этом приходит `POST` с телом
+`{"payment_id": "...", "status": "succeeded", "amount": "10.00", "currency": "RUB"}`.
+
+Валюта — одна из `RUB`, `USD`, `EUR`.
+
 ## Поток обработки
 
 ```
@@ -189,3 +209,14 @@ uv run pytest -m pg         # + один тест на реальном Postgres
    сообщение проходит `payments.new.retry.2s` → `.4s` → `.8s`.
 3. После третьей неудачной попытки сообщение оказывается в `payments.new.dlq`.
 4. `GET /api/v1/payments/{id}` — `webhook_attempts = 3`, `webhook_delivered_at = null`.
+
+## Проверка durability вручную
+
+1. Создать несколько платежей, не дожидаясь их обработки (или временно
+   остановить `consumer`: `docker compose stop consumer`), чтобы в `payments.new`
+   накопились сообщения.
+2. `docker compose restart rabbitmq`.
+3. После рестарта сообщения по-прежнему в очереди (видно в management UI) — это
+   следствие `durable=True` на очередях и `persist=True` при публикации
+   (`delivery_mode=2`). Без этого рестарт брокера обесценивал бы outbox pattern:
+   события были бы гарантированно доставлены из БД в брокер и тут же потеряны.
