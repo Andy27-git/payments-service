@@ -96,6 +96,11 @@ async def _process(payment_id: uuid.UUID) -> None:
         # вебхука (объект остаётся пригодным после закрытия сессии: expire_on_commit=False,
         # все нужные атрибуты загружены этим SELECT'ом)
         payment = await session.get(Payment, payment_id)
+        if payment is None:
+            # платёж исчез между двумя чтениями — в этом сервисе строки не удаляются,
+            # так что случай гипотетический; проверка нужна, чтобы не улететь в
+            # AttributeError на None вместо явного выхода
+            return
 
     delivered = await send_webhook(payment)
     if not delivered:

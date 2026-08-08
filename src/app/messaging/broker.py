@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 
+from aiormq.exceptions import ChannelPreconditionFailed
 from faststream.rabbit import ExchangeType, RabbitBroker, RabbitExchange, RabbitQueue
 
 from app.config import get_settings
@@ -74,15 +75,28 @@ async def declare_topology() -> None:
     Вызывается один раз при старте consumer'а — RabbitBroker не делает этого
     сам за пределами @broker.subscriber, а нам нужны ещё retry-очереди и DLQ.
     """
-    payments_exch = await broker.declare_exchange(payments_exchange)
-    dlx_exch = await broker.declare_exchange(dlx_exchange)
+    try:
+        payments_exch = await broker.declare_exchange(payments_exchange)
+        dlx_exch = await broker.declare_exchange(dlx_exchange)
 
-    new_q = await broker.declare_queue(new_queue)
-    await new_q.bind(payments_exch, routing_key=NEW_ROUTING_KEY)
+        new_q = await broker.declare_queue(new_queue)
+        await new_q.bind(payments_exch, routing_key=NEW_ROUTING_KEY)
 
-    for retry_queue in retry_queues:
-        # без биндинга к exchange — публикация идёт напрямую в очередь (см. комментарий выше)
-        await broker.declare_queue(retry_queue)
+        for retry_queue in retry_queues:
+            # без биндинга к exchange — публикация идёт напрямую в очередь (см. комментарий выше)
+            await broker.declare_queue(retry_queue)
 
-    dlq_q = await broker.declare_queue(dlq_queue)
-    await dlq_q.bind(dlx_exch, routing_key=DLQ_ROUTING_KEY)
+        dlq_q = await broker.declare_queue(dlq_queue)
+        await dlq_q.bind(dlx_exch, routing_key=DLQ_ROUTING_KEY)
+    except ChannelPreconditionFailed as exc:
+        # аргументы очереди (x-message-ttl, x-dead-letter-*) в RabbitMQ неизменяемы:
+        # если очередь с таким именем уже создана с другими аргументами, повторное
+        # объявление падает. Без этой обёртки наружу летел бы трейсбек aiormq, из
+        # которого не очевидно ни что делать, ни что виноват старый том rabbitmq
+        msg = (
+            f"Не удалось объявить топологию RabbitMQ: {exc}. "
+            "Очередь с таким именем уже существует с другими аргументами — "
+            "аргументы очередей неизменяемы. Пересоздайте топологию: "
+            "docker compose down -v (или удалите конфликтующую очередь вручную)."
+        )
+        raise RuntimeError(msg) from exc
