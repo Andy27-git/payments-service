@@ -17,7 +17,9 @@ from app.messaging.outbox_relay import run_outbox_relay
 
 logger = logging.getLogger(__name__)
 
-app = FastStream(broker)
+# logger=... по той же причине, что и у broker (см. app/messaging/broker.py):
+# дефолтный логгер FastStream пишет текстом мимо JSON-хендлера
+app = FastStream(broker, logger=logging.getLogger("app.consumer"))
 
 _relay_task: asyncio.Task[None] | None = None
 

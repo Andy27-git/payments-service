@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock
 
 from sqlalchemy import select
@@ -51,3 +52,50 @@ async def test_relay_once_returns_zero_when_nothing_to_publish(session_factory, 
 
     assert published == 0
     publish_mock.assert_not_awaited()
+
+
+async def test_cleanup_published_removes_only_old_published_rows(session_factory):
+    now = datetime.now(UTC)
+    async with session_factory() as session:
+        session.add(
+            Outbox(
+                event_type="payment.created",
+                payload={"payment_id": "old"},
+                published_at=now - timedelta(hours=48),
+            )
+        )
+        session.add(
+            Outbox(
+                event_type="payment.created",
+                payload={"payment_id": "recent"},
+                published_at=now - timedelta(hours=1),
+            )
+        )
+        # неопубликованную запись уборка не должна трогать ни при каких условиях
+        session.add(Outbox(event_type="payment.created", payload={"payment_id": "unpublished"}))
+        await session.commit()
+
+    deleted = await outbox_relay.cleanup_published(session_factory, retention_hours=24)
+
+    assert deleted == 1
+    async with session_factory() as session:
+        remaining = (await session.execute(select(Outbox))).scalars().all()
+        assert {row.payload["payment_id"] for row in remaining} == {"recent", "unpublished"}
+
+
+async def test_cleanup_published_disabled_by_zero_retention(session_factory):
+    async with session_factory() as session:
+        session.add(
+            Outbox(
+                event_type="payment.created",
+                payload={"payment_id": "old"},
+                published_at=datetime.now(UTC) - timedelta(days=365),
+            )
+        )
+        await session.commit()
+
+    deleted = await outbox_relay.cleanup_published(session_factory, retention_hours=0)
+
+    assert deleted == 0
+    async with session_factory() as session:
+        assert len((await session.execute(select(Outbox))).scalars().all()) == 1

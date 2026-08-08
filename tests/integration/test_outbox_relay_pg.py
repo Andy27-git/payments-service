@@ -18,6 +18,23 @@ pytestmark = pytest.mark.pg
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 
+def _probe(url: str) -> str | None:
+    """Возвращает None, если к БД удалось подключиться, иначе описание ошибки."""
+    import asyncio
+
+    import asyncpg
+
+    async def connect() -> None:
+        conn = await asyncpg.connect(url.replace("postgresql+asyncpg://", "postgresql://"))
+        await conn.close()
+
+    try:
+        asyncio.run(connect())
+    except Exception as exc:  # noqa: BLE001 — важен сам факт недоступности, не тип
+        return f"{type(exc).__name__}: {exc}"
+    return None
+
+
 @pytest.fixture(scope="module")
 def postgres_url() -> str:
     try:
@@ -32,7 +49,15 @@ def postgres_url() -> str:
         pytest.skip(f"Docker недоступен: {exc}")
 
     try:
-        yield container.get_connection_url()
+        # testcontainers отдаёт хост как "localhost"; на Docker Desktop он может
+        # разрешаться в ::1, куда опубликованный порт не проброшен, и соединение
+        # просто отваливается по таймауту. Явный IPv4 обходит это
+        url = container.get_connection_url().replace("@localhost:", "@127.0.0.1:")
+        # Docker может быть запущен, но недостижим по сети (проброс портов, firewall).
+        # Тогда тест бессмысленно падать — это не дефект кода, а окружение
+        if problem := _probe(url):
+            pytest.skip(f"Postgres из testcontainers недостижим с хоста: {problem}")
+        yield url
     finally:
         container.stop()
 

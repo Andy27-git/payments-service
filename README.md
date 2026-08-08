@@ -25,12 +25,13 @@ docker compose up --build
 фоновой outbox-relay задачей). Порядок старта: `postgres` + `rabbitmq` (healthy) →
 `api` (миграции + healthy) → `consumer`.
 
-- API: `http://localhost:8000` (`GET /health` — без авторизации)
+- API: `http://localhost:8000`
 - RabbitMQ management UI: `http://localhost:15672` (guest/guest)
 
 ## API
 
-Все эндпоинты `/api/v1/*` требуют заголовок `X-API-Key` (значение — `API_KEY` из `.env`).
+**Все** эндпоинты, включая `GET /health`, требуют заголовок `X-API-Key` (значение —
+`API_KEY` из `.env`). Docker healthcheck передаёт этот же ключ из окружения контейнера.
 
 ### `POST /api/v1/payments`
 
@@ -158,6 +159,10 @@ x-dead-letter-routing-key: payments.new`: по истечении TTL RabbitMQ �
 внутри `consumer`, а не внутри `api`: тогда падение/перезапуск `api` не тормозит
 публикацию накопленных событий.
 
+Тот же цикл раз в 10 минут удаляет уже опубликованные outbox-записи старше
+`OUTBOX_RETENTION_HOURS` — иначе таблица растёт бесконечно. Неопубликованные строки
+уборка не трогает никогда, так что гарантия доставки от неё не зависит.
+
 ## RabbitMQ топология
 
 Все exchange и очереди — `durable=True`, все сообщения публикуются persistent
@@ -167,7 +172,7 @@ pattern уже гарантированно доставил в брокер.
 | Объект | Тип | Комментарий |
 |---|---|---|
 | `payments` | exchange (direct) | основной поток событий |
-| `payments.new` | queue | обрабатывается consumer'ом |
+| `payments.new` | queue | обрабатывается consumer'ом; `x-dead-letter-*` → `payments.new.dlq` как страховка (см. ниже) |
 | `payments.new.retry.2s` / `.4s` / `.8s` | queue | `x-message-ttl` + dead-letter обратно в `payments.new` |
 | `payments.dlx` | exchange (direct) | публикуется явно из consumer'а после 3 неудачных попыток |
 | `payments.new.dlq` | queue | конечная точка для сообщений, не обработанных после 3 попыток |
@@ -176,6 +181,12 @@ pattern уже гарантированно доставил в брокер.
 RabbitMQ проверяет истечение TTL только у сообщения в **голове** очереди: с общим
 backoff 2/4/8с сообщение с меньшим TTL ждало бы позади сообщения с большим TTL
 столько же, сколько и оно (head-of-line blocking).
+
+`x-dead-letter-*` на самой `payments.new` — это **страховка, а не основной путь**:
+штатные сбои consumer публикует в retry-очереди сам. Но если сообщение будет
+reject'нуто мимо нашего `try` (тело не разбирается в dict ещё до вызова хендлера,
+либо не удался сам publish в retry-очередь), без DLX оно бы бесследно исчезло —
+а с ним попадёт в `payments.new.dlq` и останется видимым.
 
 ## Тесты
 
@@ -191,8 +202,9 @@ uv run pytest -m pg         # + один тест на реальном Postgres
 Поэтому конкурентное поведение outbox relay (двух relay-корутин, разбирающих одни
 и те же строки без дублей) проверяется отдельным тестом с меткой `@pytest.mark.pg`:
 поднимает Postgres через testcontainers, реально прогоняет `alembic upgrade head`
-и только затем гоняет relay. Требует Docker; если он недоступен — тест
-пропускается, а не падает.
+и только затем гоняет relay. Требует Docker; если он недоступен — или запущен, но
+контейнер недостижим с хоста (проброс портов, firewall) — тест пропускается, а не
+падает.
 
 ## Переменные окружения
 
@@ -204,6 +216,7 @@ uv run pytest -m pg         # + один тест на реальном Postgres
 | `RABBITMQ_URL` | `amqp://...` |
 | `API_KEY` | статический ключ для заголовка `X-API-Key` |
 | `LOG_LEVEL` | уровень логирования (JSON-логи в stdout) |
+| `OUTBOX_RETENTION_HOURS` | сколько часов хранить опубликованные outbox-записи (по умолчанию 24, `0` отключает уборку) |
 
 ## Проверка retry/DLQ вручную
 

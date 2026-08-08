@@ -50,52 +50,77 @@ async def handle_payment_new(body: dict[str, Any], message: RabbitMessage) -> No
 
 
 async def _process(payment_id: uuid.UUID) -> None:
+    # Каждый шаг — отдельная короткая сессия, и ни одна не живёт во время внешних
+    # вызовов. Держать одну сессию на весь хендлер нельзя: первый же SELECT открывает
+    # транзакцию, и она оставалась бы открытой все 2-5с эмуляции шлюза плюс время
+    # HTTP-запроса вебхука. При prefetch_count=10 это до 10 соединений в состоянии
+    # idle in transaction — они держат снапшот и мешают вакууму на ровном месте.
     session_factory = get_session_factory()
+
     async with session_factory() as session:
         payment = await session.get(Payment, payment_id)
         if payment is None:
             return
-
-        if payment.status != PaymentStatus.PENDING and payment.webhook_delivered_at is not None:
+        needs_gateway = payment.status == PaymentStatus.PENDING
+        if not needs_gateway and payment.webhook_delivered_at is not None:
             # платёж уже полностью обработан и вебхук доставлен — это дубликат/поздний
             # повтор доставки. Проверять только status нельзя: сообщение, вернувшееся из
             # retry-очереди именно из-за неудачного вебхука, увидело бы уже проставленный
             # status и вышло бы здесь, так и не переотправив вебхук
             return
 
-        if payment.status == PaymentStatus.PENDING:
-            outcome = await process_payment()
+    if needs_gateway:
+        outcome = await process_payment()
+        async with session_factory() as session:
             result = await session.execute(
                 update(Payment)
-                .where(Payment.id == payment.id, Payment.status == PaymentStatus.PENDING)
+                .where(Payment.id == payment_id, Payment.status == PaymentStatus.PENDING)
                 .values(status=outcome, processed_at=datetime.now(UTC))
             )
             await session.commit()
-            if result.rowcount == 0:
-                # параллельная доставка того же сообщения уже перевела платёж из pending
-                return
-            await session.refresh(payment)
+            updated = result.rowcount
+        if updated == 0:
+            # параллельная доставка того же сообщения уже перевела платёж из pending
+            return
 
+    async with session_factory() as session:
         # инкремент до HTTP-вызова: попытка должна учитываться, даже если процесс
         # упадёт в момент отправки вебхука
         await session.execute(
-            update(Payment).where(Payment.id == payment.id).values(webhook_attempts=Payment.webhook_attempts + 1)
+            update(Payment)
+            .where(Payment.id == payment_id)
+            .values(webhook_attempts=Payment.webhook_attempts + 1)
         )
         await session.commit()
+        # перечитываем платёж уже с финальным статусом — именно он уходит в payload
+        # вебхука (объект остаётся пригодным после закрытия сессии: expire_on_commit=False,
+        # все нужные атрибуты загружены этим SELECT'ом)
+        payment = await session.get(Payment, payment_id)
 
-        delivered = await send_webhook(payment)
-        if not delivered:
-            raise WebhookDeliveryError(f"webhook delivery failed for payment {payment.id}")
+    delivered = await send_webhook(payment)
+    if not delivered:
+        raise WebhookDeliveryError(f"webhook delivery failed for payment {payment_id}")
 
+    async with session_factory() as session:
         await session.execute(
-            update(Payment).where(Payment.id == payment.id).values(webhook_delivered_at=datetime.now(UTC))
+            update(Payment)
+            .where(Payment.id == payment_id)
+            .values(webhook_delivered_at=datetime.now(UTC))
         )
         await session.commit()
 
 
 async def _schedule_retry(body: dict[str, Any], attempt: int) -> None:
     if attempt >= MAX_ATTEMPTS:
-        await broker.publish(body, exchange=dlx_exchange, routing_key=DLQ_ROUTING_KEY, persist=True)
+        # x-retry-count пробрасываем и в DLQ: иначе по лежащему там сообщению не видно,
+        # сколько попыток за ним стоит
+        await broker.publish(
+            body,
+            exchange=dlx_exchange,
+            routing_key=DLQ_ROUTING_KEY,
+            headers={RETRY_COUNT_HEADER: attempt},
+            persist=True,
+        )
         return
     await broker.publish(
         body,

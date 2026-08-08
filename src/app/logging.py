@@ -42,6 +42,12 @@ class JsonFormatter(logging.Formatter):
         return json.dumps(payload, default=str, ensure_ascii=False)
 
 
+# логгеры, которые ставят свой хендлер и по умолчанию не пропагируют записи в root:
+# без этого вывод получался бы смешанным — наш JSON плюс текстовые строки uvicorn
+# и FastStream (у последнего ещё и с ANSI-цветами, что ломает парсинг логов)
+_THIRD_PARTY_LOGGERS = ("uvicorn", "uvicorn.access", "uvicorn.error", "faststream")
+
+
 def setup_logging(level: str = "INFO") -> None:
     handler = logging.StreamHandler(sys.stdout)
     handler.setFormatter(JsonFormatter())
@@ -50,6 +56,11 @@ def setup_logging(level: str = "INFO") -> None:
     root = logging.getLogger()
     root.handlers = [handler]
     root.setLevel(level)
+
+    for name in _THIRD_PARTY_LOGGERS:
+        third_party = logging.getLogger(name)
+        third_party.handlers = []
+        third_party.propagate = True
 
 
 @contextlib.contextmanager

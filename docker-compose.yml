@@ -49,12 +49,17 @@ services:
       - "8000:8000"
     command: sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000"
     healthcheck:
-      # без curl/wget в slim-образе: используем то, что уже есть в рантайме
+      # без curl/wget в slim-образе: используем то, что уже есть в рантайме.
+      # /health, как и остальные эндпоинты, требует X-API-Key — берём его из того же
+      # окружения контейнера, что и приложение
       test:
         - CMD
         - python
         - -c
-        - import urllib.request as u; u.urlopen("http://localhost:8000/health", timeout=3)
+        - |
+          import os, urllib.request as u
+          r = u.Request("http://localhost:8000/health", headers={"X-API-Key": os.environ["API_KEY"]})
+          u.urlopen(r, timeout=3)
       interval: 5s
       timeout: 5s
       retries: 10
@@ -63,9 +68,16 @@ services:
     <<: *app
     command: python -m app.consumer.app
     depends_on:
-      # миграции гоняет только api (см. Dockerfile/CMD выше); пока таблицы не
-      # созданы, outbox-relay в consumer'е упадёт на первом же поллинге —
-      # поэтому consumer стартует не раньше, чем api пройдёт свой healthcheck
+      # этот блок целиком переопределяет depends_on из якоря x-app (YAML-merge не
+      # объединяет вложенные мапы), поэтому postgres и rabbitmq перечислены заново —
+      # иначе зависимость от них была бы лишь неявной, через healthcheck api
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      # миграции гоняет только api; пока таблицы не созданы, outbox-relay в consumer'е
+      # упадёт на первом же поллинге — поэтому consumer стартует не раньше, чем api
+      # пройдёт свой healthcheck
       api:
         condition: service_healthy
 

@@ -35,3 +35,5 @@ async def test_schedule_retry_routes_to_dlq_after_max_attempts(monkeypatch):
     _, kwargs = publish_mock.await_args
     assert kwargs["routing_key"] == DLQ_ROUTING_KEY
     assert kwargs["exchange"] is handlers.dlx_exchange
+    # по сообщению в DLQ должно быть видно, сколько попыток за ним стоит
+    assert kwargs["headers"] == {handlers.RETRY_COUNT_HEADER: MAX_ATTEMPTS}

@@ -3,19 +3,18 @@ import sys
 from logging.config import fileConfig
 from pathlib import Path
 
+from alembic import context
 from sqlalchemy import pool
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
-
-from alembic import context
 
 # проект — приложение (tool.uv package = false), а не установленный пакет,
 # поэтому src/ нужно добавить в sys.path вручную
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from app.config import get_settings  # noqa: E402
-from app.db.base import Base  # noqa: E402
-from app.models import Outbox, Payment  # noqa: E402,F401  (регистрирует таблицы в Base.metadata)
+from app.config import get_settings
+from app.db.base import Base
+from app.models import Outbox, Payment  # noqa: F401  (регистрирует таблицы в Base.metadata)
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.

@@ -34,3 +34,7 @@ ENV PATH="/app/.venv/bin:$PATH" PYTHONPATH="/app/src"
 USER app
 
 EXPOSE 8000
+
+# дефолтная команда — api; consumer запускается тем же образом с переопределённой
+# командой (см. docker-compose.yml). Без CMD образ был бы непригоден для docker run
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+
 from faststream.rabbit import ExchangeType, RabbitBroker, RabbitExchange, RabbitQueue
 
 from app.config import get_settings
@@ -11,12 +13,34 @@ DLQ_ROUTING_KEY = "payments.new.dlq"
 RETRY_DELAYS_MS = (2_000, 4_000, 8_000)
 MAX_ATTEMPTS = len(RETRY_DELAYS_MS)
 
-broker = RabbitBroker(get_settings().rabbitmq_url)
+broker = RabbitBroker(
+    get_settings().rabbitmq_url,
+    # свой логгер вместо дефолтного: иначе FastStream лениво создаёт
+    # faststream.access.rabbit с propagate=False и цветным текстовым хендлером, и
+    # лог сервиса получается наполовину JSON, наполовину ANSI-раскрашенный текст.
+    # Через обычный логгер записи уходят в root-хендлер из app.logging (JSON), а поля
+    # queue/exchange/message_id попадают в JSON как отдельные ключи
+    logger=logging.getLogger("app.messaging.broker"),
+)
 
 payments_exchange = RabbitExchange("payments", type=ExchangeType.DIRECT, durable=True)
 dlx_exchange = RabbitExchange("payments.dlx", type=ExchangeType.DIRECT, durable=True)
 
-new_queue = RabbitQueue(NEW_ROUTING_KEY, durable=True, routing_key=NEW_ROUTING_KEY)
+# x-dead-letter-* на основной очереди — страховка, а не основной путь ретрая: обычные
+# сбои обработки consumer публикует в retry-очереди сам (см. handlers._schedule_retry).
+# Но если сообщение будет reject'нуто мимо нашего try — например, тело не разбирается
+# в dict ещё до вызова хендлера, или сам publish в retry-очередь не удался — без DLX
+# оно бы просто исчезло. С DLX такое сообщение попадает в payments.new.dlq и остаётся
+# видимым для разбора.
+new_queue = RabbitQueue(
+    NEW_ROUTING_KEY,
+    durable=True,
+    routing_key=NEW_ROUTING_KEY,
+    arguments={
+        "x-dead-letter-exchange": dlx_exchange.name,
+        "x-dead-letter-routing-key": DLQ_ROUTING_KEY,
+    },
+)
 
 # retry-очереди ни к чему не привязаны (никто их не consume'ит напрямую) — сообщение
 # в них публикуется через default exchange по имени очереди, "живёт" там ttl миллисекунд,
